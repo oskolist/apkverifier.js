@@ -1,0 +1,30 @@
+{
+  "name": "apkverifier",
+  "version": "0.1.0",
+  "description": "A pure-TypeScript, dependency-free library to verify the author/signer of Android .apk files (APK Signature Scheme v1, v2, and v3). Targets Node.js and modern browsers.",
+  "author": "oskolist",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "clean": "rm -rf dist coverage",
+    "build": "tsc -p .",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "node --import tsx --test 'test/**/*.test.ts'",
+    "test:watch": "node --import tsx --test --watch 'test/**/*.test.ts'"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.2"
+  }
+}
