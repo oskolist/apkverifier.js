@@ -1,5 +1,6 @@
 temp/
 node_modules/
 dist/
+dist-browser/
 coverage/
 test/_apk/

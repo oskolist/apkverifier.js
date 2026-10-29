@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>apkverifier — extract-cert (browser)</title>
+<style>
+	:root { color-scheme: light dark; }
+	body {
+		font: 400 15px ui-monospace, "SF Mono", "Courier New", monospace;
+		max-width: 960px; margin: 2rem auto; padding: 0 1rem;
+		line-height: 1.55;
+	}
+	h1 { font-size: 1.25rem; }
+	.controls { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+	.field { display: flex; flex-direction: column; gap: .25rem; }
+	label { font-size: .85rem; color: hsl(210 15% 45%); }
+	#file { padding: .35rem .6rem; }
+	#out {
+		margin-top: 1rem; white-space: pre-wrap; word-break: break-all;
+		background: hsl(210 20% 96%);
+	}
+	@media (prefers-color-scheme: dark) { #out { background: hsl(210 15% 14%); } }
+	#out:empty { display: none; }
+	.muted { opacity: .55; }
+</style>
+</head>
+<body>
+<h1>apkverifier — certificate extractor (browser)</h1>
+<p>
+	This is the browser counterpart of <code>scripts/extract-cert.cjs</code>. It calls the
+	very same <code>verifyApk</code> you’d invoke from Node, but reads the APK through the
+	Web platform instead of <code>node:fs</code> / <code>process.argv</code>.
+</p>
+<p class="muted">
+	⚠️ The library build is compiled as native ESM into <code>dist-browser/</code>.
+	Before opening this page run <code>npm run build:browser</code> once.
+	<br/>No build? Use the commented-out <code>esm.sh</code> import below instead.
+</p>
+
+<div class="controls">
+	<div class="field">
+		<label for="file">APK file (from disk)</label>
+		<input id="file" type="file" accept=".apk,application/vnd.android.package" />
+	</div>
+	<button id="clear" disabled>clear</button>
+</div>
+
+<pre id="out" aria-live="polite"></pre>
+
+<!--
+	Import paths:
+	  1) Local native-ESM build (recommended, offline):  ./../dist-browser/index.js
+	  2) CDN (no local build): uncomment the next line and delete #1
+	     import { verifyApk } from "https://esm.sh/gh/oskolist/apkverifier.js";
+-->
+<script type="module">
+	import { verifyApk } from "../dist-browser/index.js";
+
+	const fileInput = document.getElementById("file");
+	const out = document.getElementById("out");
+	const clearBtn = document.getElementById("clear");
+
+	fileInput.addEventListener("change", async () => {
+		const file = fileInput.files?.[0];
+		if (!file) return;
+		clearOutput();
+		log(`reading: ${file.name} (${file.size.toLocaleString()} bytes)`);
+		try {
+			await runVerifyApk(await file.arrayBuffer());
+		} catch (e) {
+			log(`error: ${e instanceof Error ? e.message : String(e)}`);
+		}
+	});
+
+	clearBtn.addEventListener("click", () => {
+		fileInput.value = "";
+		clearOutput();
+	});
+
+	function clearOutput() {
+		out.textContent = "";
+		clearBtn.disabled = true;
+	}
+
+	function log(s) { out.textContent += (s) + "\n"; }
+
+	function fmtScheme(name, scheme) {
+		log(`${name}: present=${scheme.present} passed=${scheme.passed}`);
+		if (scheme.errors.length) log("  errors:", scheme.errors.join("; "));
+		for (const s of scheme.signers) {
+			log(
+				`  cert SHA-256=${s.certSha256}  SHA-1=${s.certSha1}  key=${s.keyAlgorithm}(${s.keySize})  subject=${s.subject ?? "n/a"}`
+			);
+		}
+	}
+
+	async function runVerifyApk(buf) {
+		const bytes = new Uint8Array(buf);
+		const res = await verifyApk(bytes);
+		log("=== apkverifier result ===");
+		log("verified:", String(res.verified));
+		if (res.error) log("error:", res.error);
+		log("");
+		log("Signer certificate hash(es):");
+		for (const h of res.signerCertSha256) log("  SHA-256:", h);
+		log("");
+		fmtScheme("v1", res.schemes.v1);
+		fmtScheme("v2", res.schemes.v2);
+		fmtScheme("v3", res.schemes.v3);
+		log("");
+		log("signature certificate hash (SHA-256):", res.signerCertSha256[0] ?? "(none — no verified signer)");
+		clearBtn.disabled = false;
+	}
+</script>
+</body>
+</html>

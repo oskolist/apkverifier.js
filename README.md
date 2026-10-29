@@ -92,6 +92,20 @@ interface SignerInfo {
 </script>
 ```
 
+All of `src/` targets the Web platform: it only uses `crypto.subtle` and
+`DecompressionStream('deflate-raw')`, with **no** Node imports. The published
+`dist/` is CommonJS, so to import it from a browser via a *relative* path either
+build the native-ESM output (`npm run build:browser` → `dist-browser/`) or use the
+`esm.sh` CDN build shown above (which transpiles CJS→ESM for you).
+
+To try it locally without writing code, open
+[`scripts/extract-cert.html`](./scripts/extract-cert.html) in your browser — it's
+the browser twin of `scripts/extract-cert.cjs`. Pick an APK with the file picker
+and it runs `verifyApk` and prints the signer certificate SHA-256/SHA-1, key
+info, and v1/v2/v3 pass status, exactly like the CLI tool. Run
+`npm run build:browser` once before opening it (it imports from
+`../dist-browser/index.js`).
+
 ## The three signature schemes
 
 | Scheme | What it signs | Detected by | Notes |

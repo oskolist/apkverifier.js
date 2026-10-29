@@ -17,6 +17,7 @@
   "scripts": {
     "clean": "rm -rf dist coverage",
     "build": "tsc -p .",
+    "build:browser": "tsc -p tsconfig.browser.json",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "node --import tsx --test 'test/**/*.test.ts'",
     "test:watch": "node --import tsx --test --watch 'test/**/*.test.ts'"
