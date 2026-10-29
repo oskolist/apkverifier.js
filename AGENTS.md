@@ -125,7 +125,11 @@ apksigner's v1 `SignerInfo` is **not** jarsigner's:
 - The magic is the **16-byte ASCII** `"APK Sig Block 42"` at `cdOff - 16`
   (NOT the 8-byte `0x0a85ddee0d99bff0`).
 - `size2 = u64 @ (cdOff - 24)` where `magicOff = cdOff - 16`; `size1 == size2`;
-  `blockStart = cdOff - 8 - size2` and `blockStart % 4096 == 0`.
+  `blockStart = cdOff - 8 - size2`. The signing block is **not** required to be
+  4 KiB-page-aligned by apksig's *verifier* (that alignment is a *signer*-side
+  concern — see `generateApkSigningBlockPadding`); do **not** reject non-aligned
+  blocks, or valid v2/v3-only APKs signed by other tooling will be falsely
+  rejected (`blockStart % 4096 == 0` held only for apksigner-produced fixtures).
 - Block layout (apksig `generateApkSigningBlock`, lines 846-902):
   `[u64 size1][chunks…][u64 size2][16-byte magic]`. `size1`/`size2` EXCLUDE the
   8-byte size field (`sizeField = resultSize - 8`).

@@ -5,8 +5,10 @@
  *
  *   [ u64 size1 ][ chunks... ][ u64 size2 ][ 16-byte magic "APK Sig Block 42" ]
  *
- * where `size1 == size2` and the whole block starts on a 4 KiB boundary
- * (`blockStart % 4096 == 0`). Each chunk is:
+ * where `size1 == size2`. The block is not required to be page-aligned by the
+ * v2/v3 *verifier* (apksig's findApkSigningBlock only checks magic + size1==size2
+ * + blockStart >= 0); 4096 alignment is a *signer*-side convention, so we do not
+ * reject non-aligned blocks. Each chunk is:
  *
  *   [ u64 size ][ u32 id ][ data ]   (size == 12 + data.length)
  *
@@ -52,9 +54,16 @@ export function findSigningBlock(data: Uint8Array, cdOff: number): SigningBlock 
 	const size1 = readU64LE(data, blockStart);
 	if (size1 !== size2) return undefined; // integrity check (apksig: size1 == size2)
 
-	// The block must be 4 KiB page aligned (apksig verifyIntegrity enforces this).
-	if (blockStart % 4096 !== 0) return undefined;
-
+	// NOTE: apksig's *verifier* (ApkSigningBlockUtils.findApkSigningBlock) does
+	// NOT require the signing block to start on a 4 KiB page boundary. The 4096
+	// alignment is a *signer*-side concern (apksigner pads the block via
+	// generateApkSigningBlockPadding / generateApkSigningBlock), so it always
+	// holds for apksigner-signed APKs but is NOT a verification requirement.
+	// Rejecting non-aligned blocks here would falsely reject valid v2/v3-only
+	// APKs whose signing block lands at a non-page-aligned offset — real-world
+	// uploads signed by other tooling trip exactly this regression. (The 1 MiB
+	// content-digest chunking carries no page-alignment assumption either; it
+	// simply hashes apk[0..blockStart].)
 	const chunks = iterateChunks(data, blockStart + 8, magicOff - 8);
 	return { blockStart, size1, size2, magicOff, chunks };
 }

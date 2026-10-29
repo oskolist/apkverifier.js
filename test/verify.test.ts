@@ -1,20 +1,24 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import { verifyApk } from "../src/index.js";
+import { findSigningBlock, findChunk, V2_BLOCK_ID, MAGIC } from "../src/internal/apk-signature-block.js";
 import { ensureFixtures } from "./fixtures.js";
 
 // apksigner is on PATH inside `nix develop`; the bare-shell node cannot see it,
-// so spawn it via the shell wrapper and capture output.
-function apksignVerify(apkPath: string, minSdk: number): OracleResult {
+// so spawn it via the shell wrapper and capture output. When `minSdk` is
+// omitted, apksigner uses the APK's manifest minSdkVersion (matching a bare
+// `apksigner verify`).
+function apksignVerify(apkPath: string, minSdk?: number): OracleResult {
+	const args =
+		minSdk == null
+			? ["verify", "--verbose", "--print-certs", "--in", apkPath]
+			: ["verify", "--min-sdk-version", String(minSdk), "--max-sdk-version", "35", "--verbose", "--print-certs", "--in", apkPath];
 	let out = "";
 	try {
-		out = execFileSync(
-			"apksigner",
-			["verify", "--min-sdk-version", String(minSdk), "--max-sdk-version", "35", "--verbose", "--print-certs", "--in", apkPath],
-			{ encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] },
-		);
+		out = execFileSync("apksigner", args, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
 	} catch (e) {
 		// apksigner exits non-zero when the APK does not verify, but still prints
 		// its report to stdout.
@@ -132,4 +136,74 @@ describe("APK Signature Scheme verification (oracle: apksigner verify)", () => {
 		const other = await verifyApk(readApk(fixtures.rsaApk), { referenceApk: readApk(fixtures.ecApk) });
 		assert.equal(other.authorVerified, false);
 	});
+});
+
+// Regression guard for https://github.com/oskolist/apkverifier.js/issues — real
+// APKs signed by tooling other than `apksigner` can carry an APK signing block
+// that is NOT 4 KiB-page-aligned (blockStart % 4096 != 0). apksig's *verifier*
+// (ApkSigningBlockUtils.findApkSigningBlock) does NOT require page alignment —
+// that is enforced only by the *signer* (generateApkSigningBlockPadding) — so a
+// page-alignment gate in findSigningBlock wrongly rejects such APKs. These tests
+// lock in the correct behaviour.
+function setU64LE(buf: Uint8Array, off: number, v: number): void {
+	new DataView(buf.buffer, buf.byteOffset, buf.byteLength).setBigUint64(off, BigInt(v), true);
+}
+function setU32LE(buf: Uint8Array, off: number, v: number): void {
+	new DataView(buf.buffer, buf.byteOffset, buf.byteLength).setUint32(off, v, true);
+}
+
+describe("APK signing block framing (apksig verifier semantics)", () => {
+	it("locates a non-4096-aligned signing block and exposes its v2 chunk", () => {
+		// Deliberately non-page-aligned block: blockStart % 4096 != 0.
+		const blockStart = 1000;
+		const sizeField = 200; // size1 == size2 == 200
+		const cdOff = blockStart + 8 + sizeField; // = 1208
+		const buf = new Uint8Array(cdOff); // buffer is just large enough to hold the block + magic
+
+		setU64LE(buf, blockStart, sizeField); // u64 size1
+		// one v2 chunk right after size1: [u64 sz=12][u32 id][8 zero bytes]
+		const chunkOff = blockStart + 8;
+		setU64LE(buf, chunkOff, 12);
+		setU32LE(buf, chunkOff + 8, V2_BLOCK_ID);
+		// u64 size2 immediately before the 16-byte magic
+		const magicOff = cdOff - 16;
+		setU64LE(buf, magicOff - 8, sizeField);
+		buf.set(MAGIC, magicOff);
+
+		const block = findSigningBlock(buf, cdOff);
+		assert.ok(block, "findSigningBlock must locate a valid (non-aligned) block");
+		assert.equal(block!.blockStart, blockStart);
+		assert.notEqual(block!.blockStart % 4096, 0, "block is intentionally non-page-aligned");
+		assert.equal(block!.size1, sizeField);
+		assert.equal(block!.size2, sizeField);
+		assert.ok(findChunk(block!.chunks, V2_BLOCK_ID), "v2 chunk must be locatable");
+
+		// Sanity: a corrupted magic is still rejected (the test is not vacuous).
+		const corrupted = new Uint8Array(buf);
+		corrupted[magicOff] ^= 0xff;
+		assert.equal(findSigningBlock(corrupted, cdOff), undefined);
+	});
+});
+
+// End-to-end regression on a real-world non-aligned v2-only APK. Skipped when the
+// binary fixture is absent so the rest of the suite stays hermetic in CI.
+const slipNetApk = resolve(import.meta.dirname, "..", "SlipNet-v2.5.5-full-release-arm64-v8a.apk");
+const slipNetIt = existsSync(slipNetApk) ? it : it.skip;
+slipNetIt("real-world non-aligned v2-only APK (SlipNet) verifies on v2 like apksigner", async () => {
+	const bytes = readApk(slipNetApk);
+	const oracle = apksignVerify(slipNetApk); // no --min-sdk → matches bare `apksigner verify`
+	assert.equal(oracle.overall, "Verifies");
+	assert.equal(oracle.v2, true);
+	assert.equal(oracle.v1, false);
+	assert.equal(oracle.v3, false);
+
+	const res = await verifyApk(bytes);
+	assert.equal(res.verified, true);
+	assert.equal(res.schemes.v1.present, false);
+	assert.equal(res.schemes.v1.passed, false);
+	assert.equal(res.schemes.v2.present, true);
+	assert.equal(res.schemes.v2.passed, oracle.v2);
+	assert.equal(res.schemes.v3.present, false);
+	assert.deepEqual(res.signerCertSha256, oracle.certs);
+	assert.equal(res.authorVerified, true);
 });
