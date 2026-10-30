@@ -138,6 +138,40 @@ describe("APK Signature Scheme verification (oracle: apksigner verify)", () => {
 	});
 });
 
+// A pure v2/v3-only APK has no META-INF/*.RSA|.DSA|.EC signature block and no
+// MANIFEST.MF. apksig reports v1 as "not present" — NOT as an error — so a
+// verified v2-only APK must surface no spurious top-level "no MANIFEST.MF" error.
+// Regression guard for the v1.ts presence/error gating (previously any absent
+// MANIFEST.MF was reported as a v1 error even when v1 was not even present).
+describe("v1 scheme error semantics (apksig parity)", () => {
+	for (const label of ["v2only-rsa", "v2only-ec"] as const) {
+		it(`${label}: v2-only APK — v1 absent with no error, verified overall`, async () => {
+			const apk = label === "v2only-rsa" ? fixtures.v2onlyRsaApk : fixtures.v2onlyEcApk;
+			const bytes = readApk(apk);
+			const oracle = apksignVerify(apk, fixtures.v2onlyMinSdk);
+			const res = await verifyApk(bytes);
+			assert.equal(res.verified, true);
+			assert.equal(res.schemes.v1.present, false);
+			assert.equal(res.schemes.v1.passed, false);
+			assert.deepEqual(res.schemes.v1.errors, [], `${label}: v1 must not report an error when v1 is not present`);
+			assert.equal(res.schemes.v2.passed, oracle.v2);
+			// The headline assertion this regression test exists for:
+			assert.equal(
+				res.error,
+				undefined,
+				`${label}: a clean v2-only APK must not carry a "no META-INF/MANIFEST.MF" error`,
+			);
+		});
+	}
+
+	it("v1+v2+v3 APK: v1 present and verifies cleanly", async () => {
+		const res = await verifyApk(readApk(fixtures.rsaApk));
+		assert.equal(res.schemes.v1.present, true);
+		assert.equal(res.schemes.v1.passed, true);
+		assert.deepEqual(res.schemes.v1.errors, []);
+	});
+});
+
 // Regression guard for https://github.com/oskolist/apkverifier.js/issues — real
 // APKs signed by tooling other than `apksigner` can carry an APK signing block
 // that is NOT 4 KiB-page-aligned (blockStart % 4096 != 0). apksig's *verifier*

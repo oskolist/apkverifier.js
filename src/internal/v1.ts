@@ -87,14 +87,23 @@ export async function verifyV1(apk: Uint8Array, entries: ZipEntry[]): Promise<Sc
 	const byName = new Map<string, ZipEntry>();
 	for (const e of entries) byName.set(e.name, e);
 
-	const manifestEntry = byName.get(MANIFEST_NAME);
-	if (!manifestEntry) {
-		return { present: false, passed: false, signers: [], errors: ["no META-INF/MANIFEST.MF"] };
-	}
-
+	// A v1 (JAR) signature is only "present" when the central directory actually
+	// contains a signature block (META-INF/*.RSA|.DSA|.EC). When none exist the
+	// APK is signed purely via v2/v3 — the norm for modern releases — and v1
+	// being absent is expected, NOT an error. apksig reports this as "v1 not
+	// present", not as a verification failure; a missing META-INF/MANIFEST.MF
+	// with no v1 sig block must not be flagged (doing so wrongly marks clean
+	// v2/v3-only APKs as unverified). See AGENTS.md §10 / the SlipNet regression.
 	const sigBlockEntries = entries.filter(sigBlockEntry);
 	if (sigBlockEntries.length === 0) {
 		return { present: false, passed: false, signers: [], errors: [] };
+	}
+
+	// A signature block exists, so v1 IS present; a missing MANIFEST.MF now
+	// indicates a genuinely broken/partial v1 signature.
+	const manifestEntry = byName.get(MANIFEST_NAME);
+	if (!manifestEntry) {
+		return { present: true, passed: false, signers: [], errors: ["v1: signature block present but META-INF/MANIFEST.MF missing"] };
 	}
 
 	const manifestBytes = await readEntry(apk, manifestEntry);

@@ -12,18 +12,28 @@
  * environments, and asserts that the WebCrypto global actually produces digests
  * equal to a Node `crypto` oracle (i.e. the "browser environment" is exercised
  * and agrees with the Node reference).
+ *
+ * NOTE: this file deliberately does NOT call `ensureFixtures()` (unlike
+ * verify.test.ts) so it cannot race on the shared `test/_apk/` dir when both
+ * suites run concurrently under `node --test`. The WebCrypto-equivalence check
+ * instead uses the real, pre-existing SlipStream APK (skipped if absent).
  */
 import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { resolve } from "node:path";
 import { createHash } from "node:crypto";
-import { describe, it, before } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { verifyApk } from "../src/index.js";
-import { ensureFixtures } from "./fixtures.js";
 
-const ROOT = join(import.meta.dirname, "..");
-const SRC_DIR = join(ROOT, "src");
-const DIST_BROWSER_DIR = join(ROOT, "dist-browser");
+const ROOT = resolve(import.meta.dirname, "..");
+const SRC_DIR = resolve(ROOT, "src");
+const DIST_BROWSER_DIR = resolve(ROOT, "dist-browser");
+
+// Known-good signer cert for the in-repo SlipStream APK, taken from
+// `apksigner verify --print-certs` (and confirmed by an ESM/WebCrypto smoke run).
+// Used as the oracle so this test needs no generated fixtures / no `before` hook.
+const SLIPNET_APK = resolve(ROOT, "SlipNet-v2.5.5-full-release-arm64-v8a.apk");
+const SLIPNET_CERT_SHA256 = "daf191df7ace75ac24f8b13fdceb39e17ebb4b23fa336ccae8d423a2ace73402";
 
 function rel(p: string): string {
 	return p.startsWith(ROOT) ? p.slice(ROOT.length + 1) : p;
@@ -55,17 +65,12 @@ const FORBIDDEN = {
 function walk(dir: string, ext: string): string[] {
 	const out: string[] = [];
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
-		const p = join(dir, entry.name);
+		const p = resolve(dir, entry.name);
 		if (entry.isDirectory()) out.push(...walk(p, ext));
 		else if (entry.name.endsWith(ext)) out.push(p);
 	}
 	return out;
 }
-
-let fixtures: Awaited<ReturnType<typeof ensureFixtures>>;
-before(async () => {
-	fixtures = await ensureFixtures();
-});
 
 describe("library source is Web-API-surface-only", () => {
 	const files = walk(SRC_DIR, ".ts");
@@ -92,7 +97,7 @@ describe("library source is Web-API-surface-only", () => {
 });
 
 describe("dist-browser build is native ESM and Node-free", () => {
-	if (!existsSync(join(DIST_BROWSER_DIR, "index.js"))) {
+	if (!existsSync(resolve(DIST_BROWSER_DIR, "index.js"))) {
 		it.skip("dist-browser/ not present — run `npm run build:browser` to exercise this guard");
 		return;
 	}
@@ -123,18 +128,15 @@ describe("WebCrypto path agrees with the node:crypto oracle", () => {
 		assert.deepEqual(web, node, "WebCrypto and node:crypto disagreed on SHA-256");
 	});
 
-	it("verifyApk on a fixture matches the apksigner-derived cert via the WebCrypto engine", async () => {
-		const bytes = new Uint8Array(readFileSync(fixtures.rsaApk));
+	const slipNetIt = existsSync(SLIPNET_APK) ? it : it.skip;
+	slipNetIt("verifyApk (WebCrypto engine) extracts the known SlipStream signer cert", async () => {
+		const bytes = new Uint8Array(readFileSync(SLIPNET_APK));
 		const res = await verifyApk(bytes);
-		// fixtures.rsaCertSha256 comes from `openssl x509 -outform DER | createHash("sha256")` (Node oracle).
-		// The library computes the same digest through crypto.subtle.digest — they must agree.
 		assert.equal(res.verified, true);
-		assert.ok(res.signerCertSha256.length > 0);
-		assert.equal(
-			res.signerCertSha256[0],
-			fixtures.rsaCertSha256,
-			"cert SHA-256 from WebCrypto != node oracle",
-		);
+		// The cert digest is produced by crypto.subtle.digest inside the library;
+		// it must equal the apksigner/oracle value for this real APK.
+		assert.equal(res.signerCertSha256[0], SLIPNET_CERT_SHA256, "WebCrypto-derived cert != oracle");
 		assert.equal(res.schemes.v2.passed, true);
+		assert.equal(res.schemes.v1.present, false, "SlipStream is v2-only (no v1 sig block)");
 	});
 });
