@@ -1,5 +1,5 @@
 {
-  "name": "apkverifier",
+  "name": "apkverifier-js",
   "version": "0.1.0",
   "description": "A pure-TypeScript, dependency-free library to verify the author/signer of Android .apk files (APK Signature Scheme v1, v2, and v3). Targets Node.js and modern browsers.",
   "author": "oskolist",
