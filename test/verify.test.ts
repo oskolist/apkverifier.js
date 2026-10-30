@@ -172,6 +172,28 @@ describe("v1 scheme error semantics (apksig parity)", () => {
 	});
 });
 
+// RSA keySize must be the *modulus* bit size (e.g. 2048), not the DER-encoded
+// INTEGER byte length. A regression read the modulus INTEGER's *tag* byte (always
+// 0x02) instead of its first *value* byte, so a 2048-bit modulus (256 bytes;
+// DER-padded to a 257-byte INTEGER when the high bit is set) was reported as 2056.
+// The SlipNet guard in web-only.test.ts is the deterministic check on a real cert;
+// these are hermetic checks against the generated fixtures.
+describe("signer public-key size (RSA modulus bits / EC curve size)", () => {
+	it("RSA fixture (2048-bit modulus) reports keySize 2048", async () => {
+		const res = await verifyApk(readApk(fixtures.rsaApk));
+		const s = res.schemes.v2.signers[0];
+		assert.equal(s.keyAlgorithm, "RSA");
+		assert.equal(s.keySize, 2048, `expected 2048-bit RSA modulus, got ${s.keySize}`);
+	});
+
+	it("EC fixture (P-256) reports keySize 256 and algorithm EC", async () => {
+		const res = await verifyApk(readApk(fixtures.ecApk));
+		const s = res.schemes.v2.signers[0];
+		assert.equal(s.keyAlgorithm, "EC");
+		assert.equal(s.keySize, 256, `expected 256-bit EC curve, got ${s.keySize}`);
+	});
+});
+
 // Regression guard for https://github.com/oskolist/apkverifier.js/issues — real
 // APKs signed by tooling other than `apksigner` can carry an APK signing block
 // that is NOT 4 KiB-page-aligned (blockStart % 4096 != 0). apksig's *verifier*

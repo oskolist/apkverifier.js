@@ -93,7 +93,8 @@ export async function verifyV1(apk: Uint8Array, entries: ZipEntry[]): Promise<Sc
 	// being absent is expected, NOT an error. apksig reports this as "v1 not
 	// present", not as a verification failure; a missing META-INF/MANIFEST.MF
 	// with no v1 sig block must not be flagged (doing so wrongly marks clean
-	// v2/v3-only APKs as unverified). See AGENTS.md §10 / the SlipNet regression.
+	// v2/v3-only APKs as unverified). See AGENTS.md ("v1 (JAR) gotchas") and the
+	// regression tests in test/verify.test.ts ("v1 scheme error semantics").
 	const sigBlockEntries = entries.filter(sigBlockEntry);
 	if (sigBlockEntries.length === 0) {
 		return { present: false, passed: false, signers: [], errors: [] };

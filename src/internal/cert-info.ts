@@ -38,8 +38,14 @@ function spkiInfo(spki: Uint8Array): { keyAlgorithm: KeyAlgorithm; keySize: numb
 		const nTlv = rsaFields[0]; // modulus INTEGER
 		const nByteLen = nTlv.len;
 		let bits = nByteLen * 8;
-		// a leading 0x00 means the modulus is one bit shorter than the byte length
-		if (spki[contentOff + 1 + rsaPub.hlen] === 0x00) bits -= 8;
+		// DER encodes the modulus as a positive INTEGER, so when the high bit of
+		// the first content byte is set a leading 0x00 is prepended — making the
+		// encoded length one byte (8 bits) longer than the true modulus. `nTlv.off`
+		// is the offset of the INTEGER *value*'s first byte; a leading 0x00 there
+		// means the real key is 8 bits shorter than nByteLen*8. (A previous version
+		// read the INTEGER *tag* byte — always 0x02 — so the shortening was never
+		// detected and a 2048-bit modulus reported 2056.)
+		if (spki[nTlv.off] === 0x00) bits -= 8;
 		return { keyAlgorithm: "RSA", keySize: bits };
 	}
 	if (algOid === OID.EC_PUBLIC_KEY) {

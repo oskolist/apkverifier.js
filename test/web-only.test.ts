@@ -138,5 +138,11 @@ describe("WebCrypto path agrees with the node:crypto oracle", () => {
 		assert.equal(res.signerCertSha256[0], SLIPNET_CERT_SHA256, "WebCrypto-derived cert != oracle");
 		assert.equal(res.schemes.v2.passed, true);
 		assert.equal(res.schemes.v1.present, false, "SlipStream is v2-only (no v1 sig block)");
+		// Regression guard for the RSA keySize bug: this cert's 2048-bit modulus
+		// has its high bit set, so DER pads the INTEGER to 257 bytes. A correct
+		// implementation reports the true modulus size (2048); the buggy version
+		// reported 2056 (it read the INTEGER tag byte 0x02 instead of the value).
+		assert.equal(res.schemes.v2.signers[0].keyAlgorithm, "RSA");
+		assert.equal(res.schemes.v2.signers[0].keySize, 2048, `RSA keySize should be 2048, got ${res.schemes.v2.signers[0].keySize}`);
 	});
 });
