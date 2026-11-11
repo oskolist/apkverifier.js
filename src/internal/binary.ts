@@ -78,14 +78,29 @@ export async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
 	const writer = stream.writable.getWriter();
 	const reader = stream.readable.getReader();
 
-	await writer.write(data as BufferSource);
-	await writer.close();
+	// Write and read concurrently. `DecompressionStream` applies backpressure:
+	// awaiting the whole `writer.write()` before draining the readable deadlocks
+	// once the compressed input exceeds the stream's internal queue (e.g. a
+	// multi-megabyte classes.dex). Reading in parallel keeps the pipe moving.
+	const writeP = (async () => {
+		await writer.write(data as BufferSource);
+		await writer.close();
+	})();
+	const readP = (async () => {
+		const chunks: Uint8Array[] = [];
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			chunks.push(value!);
+		}
+		return concat(chunks);
+	})();
 
-	const chunks: Uint8Array[] = [];
-	for (;;) {
-		const { done, value } = await reader.read();
-		if (done) break;
-		chunks.push(value!);
-	}
-	return concat(chunks);
+	// Settle both sides so a decompression error never leaves an unhandled
+	// rejection from the writer behind; surface the reader's error (the one
+	// that actually describes the corrupt input).
+	const [writeResult, readResult] = await Promise.allSettled([writeP, readP]);
+	if (readResult.status === "rejected") throw readResult.reason;
+	if (writeResult.status === "rejected") throw writeResult.reason;
+	return readResult.value;
 }
